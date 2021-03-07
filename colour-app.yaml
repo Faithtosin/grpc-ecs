@@ -1,0 +1,302 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CI/CD pipeline for GitHub projects
+Parameters:
+  ENV:
+    Type: String
+    Default: preproduction
+    AllowedValues:
+      - preproduction
+      - production
+  ContainerPort: 
+    Type: Number
+    Default: 8080
+  HostPort: 
+    Type: Number
+    Default: 8080
+
+  ColourSelectorPort:
+    Type: Number
+    Default: 5000
+
+  
+
+
+    
+Mappings:
+  ClusterTargetGroup:
+    name:
+      preproduction: colourapp-tgroup-staging
+      production: colourapp-tgroup-master
+  ALB:
+    name:
+      preproduction: colourapp-alb-staging
+      production: colourapp-alb-master
+
+
+  
+  VPCid:
+    name:
+      preproduction: vpc-d27062a8
+      production: ''
+      
+  UISGIds:
+    name:
+      preproduction: 'sg-e1a6fac2'
+      production: ''
+      
+  PrivSubNetIds:
+    name:
+      preproduction: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
+      production: ''
+      
+  PubSubNetIds:
+    name:
+      preproduction: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
+      production: ''
+      
+  #!Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+
+Resources:
+  
+  #ECS Service
+  BlueappService:
+    Type: AWS::ECS::Service
+    DependsOn: [BlueappDiscoveryService]
+    Properties:
+      Cluster: arn:aws:ecs:us-east-1:858972826311:cluster/Appmesh-test-cluster
+      ServiceRegistries:
+        - ContainerName: blueapp-container
+          RegistryArn: !GetAtt BlueappDiscoveryService.Arn
+      DeploymentConfiguration:
+        MaximumPercent: '200'
+        MinimumHealthyPercent: '100'
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: blueapp-task
+      #PlatformVersion: 1.3.0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      ServiceName: blueapp-service
+  
+  RedappService:
+    Type: AWS::ECS::Service
+    DependsOn: [RedappDiscoveryService]
+    Properties:
+      Cluster: arn:aws:ecs:us-east-1:858972826311:cluster/Appmesh-test-cluster
+      ServiceRegistries:
+        - ContainerName: redapp-container
+          RegistryArn: !GetAtt RedappDiscoveryService.Arn
+      DeploymentConfiguration:
+        MaximumPercent: '200'
+        MinimumHealthyPercent: '100'
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: redapp-task
+      #PlatformVersion: 1.3.0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      ServiceName: redapp-service
+  
+  Redapp2Service:
+    Type: AWS::ECS::Service
+    DependsOn: [RedappDiscoveryService]
+    Properties:
+      Cluster: arn:aws:ecs:us-east-1:858972826311:cluster/Appmesh-test-cluster
+      ServiceRegistries:
+        - ContainerName: redapp2-container
+          RegistryArn: !GetAtt Redapp2DiscoveryService.Arn
+      DeploymentConfiguration:
+        MaximumPercent: '200'
+        MinimumHealthyPercent: '100'
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: redapp2-task
+      #PlatformVersion: 1.3.0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      ServiceName: redapp2-service
+  
+  GreenappService:
+    Type: AWS::ECS::Service
+    DependsOn: [GreenappDiscoveryService]
+    Properties:
+      Cluster: arn:aws:ecs:us-east-1:858972826311:cluster/Appmesh-test-cluster
+      ServiceRegistries:
+        - ContainerName: greenapp-container
+          RegistryArn: !GetAtt GreenappDiscoveryService.Arn
+      DeploymentConfiguration:
+        MaximumPercent: '200'
+        MinimumHealthyPercent: '100'
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: greenapp-task
+      #PlatformVersion: 1.3.0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      ServiceName: greenapp-service
+
+  ColourSelectorService:
+    Type: AWS::ECS::Service
+    DependsOn: [ColourSelectorDiscoveryService, ALBListener]
+    Properties:
+      Cluster: arn:aws:ecs:us-east-1:858972826311:cluster/Appmesh-test-cluster
+      ServiceRegistries:
+        - ContainerName: colourselector-container
+          RegistryArn: !GetAtt ColourSelectorDiscoveryService.Arn
+      DeploymentConfiguration:
+        MaximumPercent: '200'
+        MinimumHealthyPercent: '100'
+      DesiredCount: 1
+      LoadBalancers:
+      - ContainerName: colourselector-container
+        ContainerPort: !Ref ColourSelectorPort
+        TargetGroupArn: !Ref 'ECSTG'
+      LaunchType: FARGATE
+      TaskDefinition: colourselector-task
+      #PlatformVersion: 1.3.0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      ServiceName: colourselector-service
+  #Target Group for ECS
+  ECSTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ECSALB
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Name: !FindInMap [ClusterTargetGroup, name, !Ref ENV]
+      Port: !Ref ColourSelectorPort
+      Protocol: HTTP
+      TargetType: ip
+      UnhealthyThresholdCount: 2
+      VpcId: !FindInMap [VPCid, name, !Ref ENV] 
+
+  #Load Balancer
+  ECSALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !FindInMap [ALB, name, !Ref ENV]
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '30'
+      Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+      SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
+
+
+
+
+  #ALB Listener
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      LoadBalancerArn: !Ref 'ECSALB'
+      Port: '80'
+      Protocol: HTTP
+  
+  #ALB Listener Rule
+  ECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref 'ALBListener'
+      Priority: 1
+
+
+
+  DNSNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: mesh.local
+      Vpc: !FindInMap [VPCid, name, !Ref ENV]
+  
+  BlueappDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      DnsConfig:
+        RoutingPolicy: WEIGHTED
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      Name: blueapp-service
+      NamespaceId: !GetAtt DNSNamespace.Id
+  
+  RedappDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      DnsConfig:
+        RoutingPolicy: WEIGHTED
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      Name: redapp-service
+      NamespaceId: !GetAtt DNSNamespace.Id
+  
+  Redapp2DiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      DnsConfig:
+        RoutingPolicy: WEIGHTED
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      Name: redapp2-service
+      NamespaceId: !GetAtt DNSNamespace.Id
+
+  GreenappDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      DnsConfig:
+        RoutingPolicy: WEIGHTED
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      Name: greenapp-service
+      NamespaceId: !GetAtt DNSNamespace.Id 
+
+  ColourSelectorDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      DnsConfig:
+        RoutingPolicy: WEIGHTED
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      Name: colourselector-service
+      NamespaceId: !GetAtt DNSNamespace.Id
+  
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['-', [ECSLogGroup, !Ref 'AWS::StackName']]
+      RetentionInDays: 7
+
+
+
+
