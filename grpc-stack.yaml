@@ -14,11 +14,31 @@ Parameters:
     Type: Number
     Default: 50051
   
+  EcrAddress:
+    Type: String
+    Description: enter ecr address like XXXXXXX.dkr.ecr.us-east-1.amazonaws.com
+  
+  EcrName:
+    Type: String
+
+
+  
   AppMeshMeshName:
     Type: String 
     Description: Name of mesh
     Default: GrpcMesh
   
+  VPCid:
+    Type: String 
+    Default: vpc-d27062a8
+  
+  SGIds:
+    Type: String 
+    Default: 'sg-e1a6fac2'
+  
+  PubSubNetIds:
+    Type: String 
+    Default: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
 
 
     
@@ -53,33 +73,24 @@ Mappings:
     name:
       development: grpc-server-service-dev
       production: grpc-server-service-prod
-  RegistryName:
-    name:
-      development: grpc-server-registry-dev
-      production: grpc-server-registry-prod
-  VPCid:
-    name:
-      development: vpc-d27062a8
-      production: ''
-      
-  UISGIds:
-    name:
-      development: 'sg-e1a6fac2'
-      production: ''
-      
-  PrivSubNetIds:
-    name:
-      development: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
-      production: ''
-      
-  PubSubNetIds:
-    name:
-      development: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
-      production: ''
-      
-  #!Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+
 
 Resources:
+#Task IAM Role
+  TaskDefRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy]
+  
 #ECS Cluster      
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -89,7 +100,7 @@ Resources:
 #ECS Fargate Task Definition
   ClientTaskDefinition:
     Type: AWS::ECS::TaskDefinition
-    DependsOn: [CloudwatchLogsGroup,ClientNode]
+    DependsOn: [CloudwatchLogsGroup,ClientNode, TaskDefRole]
     Properties:
       Family: !FindInMap [ClientTaskDefinition, name, !Ref ENV]
       ContainerDefinitions:
@@ -108,29 +119,29 @@ Resources:
               Protocol: tcp
               ContainerPort: !Ref ContainerPort
           Cpu: '100'
-          Image: 'docker/getting-started'
-          Essential: false
+          Image: !Sub '${EcrAddress}/${EcrName}:greeter_client'
+          Essential: true
           Environment:
             - Name: GREETER_ENDPOINT
               Value: greeter_server.local:50051
         - Name: envoy
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref 'CloudwatchLogsGroup'
-              awslogs-region: !Ref 'AWS::Region'
-              awslogs-stream-prefix: !Sub ${AWS::StackName}-ecs-dev
           User: "1337"
           HealthCheck:
             Command: 
               - "CMD-SHELL" 
-              - !Sub '"curl -s http://localhost:9901/server_info | grep state | grep -q LIVE"'
+              - !Sub "curl -s http://localhost:9901/server_info | grep state | grep -q LIVE"
+            Interval: 5
+            Retries: 3
+            StartPeriod: 10
+            Timeout: 2
+          Memory: 500
           Image: '840364872350.dkr.ecr.us-east-1.amazonaws.com/aws-appmesh-envoy:v1.16.1.1-prod'
           Essential: true
           Environment:
             - Name: APPMESH_VIRTUAL_NODE_NAME
-              Value: !Sub "mesh/${AppMesh}/virtualNode/grpc-client-vn"
-      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole
+              Value: !Sub "mesh/${AppMeshMeshName}/virtualNode/grpc-client-vn"
+      ExecutionRoleArn: !GetAtt TaskDefRole.Arn
+      TaskRoleArn: !GetAtt TaskDefRole.Arn
       ProxyConfiguration:
         Type: APPMESH
         ContainerName: envoy
@@ -154,11 +165,14 @@ Resources:
 #ECS Fargate Task Definition
   ServerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
-    DependsOn: [CloudwatchLogsGroup,ServerNode]
+    DependsOn: [CloudwatchLogsGroup, ServerNode, TaskDefRole]
     Properties:
       Family: !FindInMap [ServerTaskDefinition, name, !Ref ENV]
       ContainerDefinitions:
         - Name: !FindInMap [ServerContainer, name, !Ref ENV]
+          DependsOn: 
+            - Condition: HEALTHY
+              ContainerName: envoy
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -170,9 +184,40 @@ Resources:
               Protocol: tcp
               ContainerPort: !Ref ContainerPort
           Cpu: '100'
-          Image: 'docker/getting-started'
+          Image: !Sub '${EcrAddress}/${EcrName}:greeter_server'
           Essential: true
-      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole
+        - Name: envoy
+          User: "1337"
+          HealthCheck:
+            Command: 
+              - "CMD-SHELL" 
+              - !Sub "curl -s http://localhost:9901/server_info | grep state | grep -q LIVE"
+            Interval: 5
+            Retries: 3
+            StartPeriod: 10
+            Timeout: 2
+          Memory: 500
+          Image: '840364872350.dkr.ecr.us-east-1.amazonaws.com/aws-appmesh-envoy:v1.16.1.1-prod'
+          Essential: true
+          Environment:
+            - Name: APPMESH_VIRTUAL_NODE_NAME
+              Value: !Sub "mesh/${AppMeshMeshName}/virtualNode/grpc-server-vn"
+      ExecutionRoleArn: !GetAtt TaskDefRole.Arn
+      TaskRoleArn: !GetAtt TaskDefRole.Arn
+      ProxyConfiguration:
+        Type: APPMESH
+        ContainerName: envoy
+        ProxyConfigurationProperties:
+          - Name: ProxyIngressPort
+            Value: 15000
+          - Name: AppPorts
+            Value: !Ref ContainerPort
+          - Name: EgressIgnoredIPs
+            Value: "169.254.170.2,169.254.169.254"
+          - Name: IgnoredUID
+            Value: 1337
+          - Name: ProxyEgressPort
+            Value: 15001
       Memory: '512'
       NetworkMode: awsvpc
       Cpu: '256'
@@ -199,8 +244,8 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
-          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+          SecurityGroups: !Split [ ",", !Ref SGIds ]
+          Subnets: !Split [ ",", !Ref PubSubNetIds ]
       ServiceName: !FindInMap [ClientService, name, !Ref ENV]
   
   ServerService:
@@ -221,8 +266,8 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          SecurityGroups: !Split [ ",", !FindInMap [UISGIds, name, !Ref ENV] ]
-          Subnets: !Split [ ",", !FindInMap [PubSubNetIds, name, !Ref ENV] ]
+          SecurityGroups: !Split [ ",", !Ref SGIds ]
+          Subnets: !Split [ ",", !Ref PubSubNetIds ]
       ServiceName: !FindInMap [ServerService, name, !Ref ENV]
   
 
@@ -231,7 +276,7 @@ Resources:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Properties:
       Name: local
-      Vpc: !FindInMap [VPCid, name, !Ref ENV]
+      Vpc: !Ref VPCid
   
 
   ServerServiceDiscovery:
@@ -304,41 +349,4 @@ Resources:
             NamespaceName: local
             ServiceName: greeter_client
   
-  ECRRepository:
-    Type: 'AWS::ECR::Repository'
-    Properties:
-      ImageTagMutability: MUTABLE
-      RepositoryName: !FindInMap [RegistryName, name, !Ref ENV]
-      RepositoryPolicyText:
-        Version: 2012-10-17
-        Statement:
-          - Action:
-              - 'ecr:BatchCheckLayerAvailability'
-              - 'ecr:BatchDeleteImage'
-              - 'ecr:BatchGetImage'
-              - 'ecr:CompleteLayerUpload'
-              - 'ecr:DeleteLifecyclePolicy'
-              - 'ecr:DeleteRepository'
-              - 'ecr:DeleteRepositoryPolicy'
-              - 'ecr:DescribeImages'
-              - 'ecr:DescribeRepositories'
-              - 'ecr:GetDownloadUrlForLayer'
-              - 'ecr:GetLifecyclePolicy'
-              - 'ecr:GetLifecyclePolicyPreview'
-              - 'ecr:GetRepositoryPolicy'
-              - 'ecr:InitiateLayerUpload'
-              - 'ecr:ListImages'
-              - 'ecr:PutImage'
-              - 'ecr:PutLifecyclePolicy'
-              - 'ecr:SetRepositoryPolicy'
-              - 'ecr:StartLifecyclePolicyPreview'
-              - 'ecr:UploadLayerPart'
-            Principal:
-              Service:
-                - codebuild.amazonaws.com
-                - codepipeline.amazonaws.com
-                - ecs.amazonaws.com
-            Effect: Allow
-            Sid: new statement
-
 
