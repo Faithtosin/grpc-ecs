@@ -1,10 +1,6 @@
 [
   
     {
-      "ParameterKey": "ENV",
-      "ParameterValue": "development"
-    },
-    {
       "ParameterKey": "VPCid",
       "ParameterValue": "vpc-009fe6e0b95bc4279"
     },
