@@ -2,19 +2,19 @@
   
     {
       "ParameterKey": "VPCid",
-      "ParameterValue": "vpc-009fe6e0b95bc4279"
+      "ParameterValue": "vpc-xxxxxxx"
     },
     {
       "ParameterKey": "SGIds",
-      "ParameterValue": "sg-0e53611d959d28c5e"
+      "ParameterValue": "sg-xxxxxxxxxx"
     },
     {
       "ParameterKey": "PubSubNetIds",
-      "ParameterValue": "subnet-0149c35570054101e,subnet-0d81c66097f12cd7d,subnet-0ab1d528fc32f7f99"
+      "ParameterValue": "subnet-xxxxxxxxx,subnet-xxxxxxxxxx,subnet-xxxxxxxx"
     }, 
     {
         "ParameterKey": "EcrAddress",
-        "ParameterValue": "698324764230.dkr.ecr.us-east-1.amazonaws.com"
+        "ParameterValue": "xxxxxxxxxxx.dkr.ecr.us-east-1.amazonaws.com"
     },
     {
         "ParameterKey": "EcrName",

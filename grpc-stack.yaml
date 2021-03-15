@@ -139,7 +139,9 @@ Resources:
           Essential: true
           Environment:
             - Name: APPMESH_VIRTUAL_NODE_NAME
-              Value: !Sub "mesh/${AppMeshMeshName}/virtualNode/grpc-client-vn"
+              Value: !Sub 
+                - mesh/${AppMeshMeshName}/virtualNode/${VirtualNodeName}
+                - VirtualNodeName: !GetAtt ClientNode.VirtualNodeName
       ExecutionRoleArn: !GetAtt TaskDefRole.Arn
       TaskRoleArn: !GetAtt TaskDefRole.Arn
       ProxyConfiguration:
@@ -201,7 +203,9 @@ Resources:
           Essential: true
           Environment:
             - Name: APPMESH_VIRTUAL_NODE_NAME
-              Value: !Sub "mesh/${AppMeshMeshName}/virtualNode/grpc-server-vn"
+              Value: !Sub 
+                - mesh/${AppMeshMeshName}/virtualNode/${VirtualNodeName}
+                - VirtualNodeName: !GetAtt ServerNode.VirtualNodeName
       ExecutionRoleArn: !GetAtt TaskDefRole.Arn
       TaskRoleArn: !GetAtt TaskDefRole.Arn
       ProxyConfiguration:
