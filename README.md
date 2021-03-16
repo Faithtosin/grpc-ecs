@@ -1,5 +1,5 @@
 # grpc-ecs
-
+![Grpc-stack Architectural diagram](./doc/Architectural-diagram-Page-17.png)
 
 - Run `sh create-ecr.sh grpc-repo`
 - Copy aside the repository uri "repositoryUri": "xxxxxxxxx.dkr.ecr.us-east-1.amazonaws.com/grpc-repo".  
