@@ -20,27 +20,51 @@ Parameters:
   
   EcrName:
     Type: String
+    Default: grpc-repo
 
+  CertId:
+    Type: String
+    Description: ID of ssl certificate in ACM
+    Default: xxxxxxxx
 
-  
   AppMeshMeshName:
     Type: String 
     Description: Name of mesh
     Default: GrpcMesh
-  
+
+  NamespaceName:
+    Type: String
+    Description: local DNS name
+    Default: local
+  ClientServiceEndpoint:
+    Type: String
+    Description: client local Dns
+    Default: frontend
+
+  ServerServiceEndpoint:
+    Type: String
+    Description: client local Dns
+    Default: greeter_server
+
   VPCid:
     Type: String 
-    Default: vpc-d27062a8
+    Default: vpc-059fa6c20ceedd1f6
   
   SGIds:
     Type: String 
-    Default: 'sg-e1a6fac2'
+    Default: 'sg-0466da81c58413908'
   
   PubSubNetIds:
     Type: String 
-    Default: 'subnet-d356eedd,subnet-41478a60,subnet-e6aea4d8'
+    Default: 'subnet-05309765a00dc7cd0,subnet-0dd11feb519ed8ae9,subnet-05c5f8a23db600755'
 
-
+Conditions:
+  CreateProdResources: !Equals
+    - !Ref ENV
+    - production
+  CreateDevResources: !Equals
+    - !Ref ENV
+    - development
     
 Mappings:
   Cluster:
@@ -60,6 +84,14 @@ Mappings:
     name:
       development: grpc-client-service-dev
       production: grpc-client-service-prod
+  ClusterTargetGroup:
+    name:
+      development: grpc-client-tgroup-dev
+      production: grpc-client-tgroup-prod
+  ALB:
+    name:
+      development: grpc-client-alb-dev
+      production: grpc-client-alb-prod
 
   ServerTaskDefinition:
     name:
@@ -123,7 +155,7 @@ Resources:
           Essential: true
           Environment:
             - Name: GREETER_ENDPOINT
-              Value: greeter_server.local:50051
+              Value: !Sub ${ServerServiceEndpoint}.${NamespaceName}:50051
         - Name: envoy
           User: "1337"
           HealthCheck:
@@ -242,6 +274,10 @@ Resources:
         MaximumPercent: '200'
         MinimumHealthyPercent: '100'
       DesiredCount: 1
+      LoadBalancers:
+      - ContainerName: !FindInMap [ClientContainer, name, !Ref ENV]
+        ContainerPort: !Ref ContainerPort
+        TargetGroupArn: !Ref 'ECSTG'
       LaunchType: FARGATE
       TaskDefinition: !Ref ClientTaskDefinition
       #PlatformVersion: 1.3.0
@@ -251,7 +287,108 @@ Resources:
           SecurityGroups: !Split [ ",", !Ref SGIds ]
           Subnets: !Split [ ",", !Ref PubSubNetIds ]
       ServiceName: !FindInMap [ClientService, name, !Ref ENV]
+
+  #Target Group for ECS
+  ECSTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ECSALB
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Name: !FindInMap [ClusterTargetGroup, name, !Ref ENV]
+      Port: !Ref HostPort
+      Protocol: HTTP
+      TargetType: ip
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPCid 
+
+#Load Balancer
+  ECSALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !FindInMap [ALB, name, !Ref ENV]
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '30'
+      Subnets: !Split [ ",", !Ref PubSubNetIds ]
+      SecurityGroups: !Split [ ",", !Ref SGIds ]
+
+
+
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Condition: CreateProdResources
+    Properties:
+      DefaultActions:
+        - Type: "redirect"
+          RedirectConfig:
+            Protocol: "HTTPS"
+            Port: 443
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: "HTTP_301"
+      LoadBalancerArn: !Ref 'ECSALB'
+      Port: 80
+      Protocol: "HTTP"
+
+  #ALB Listener
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateProdResources
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      Certificates: 
+        - CertificateArn:  !Sub arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${CertId}
+      LoadBalancerArn: !Ref 'ECSALB'
+      Port: '443'
+      Protocol: HTTPS
+
+  ALBListener2:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateDevResources
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      LoadBalancerArn: !Ref 'ECSALB'
+      Port: '80'
+      Protocol: HTTP
   
+  #ALB Listener Rule
+  ECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: CreateProdResources
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref 'ALBListener'
+      Priority: 1
+  
+  ECSALBListenerRule2:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: CreateDevResources
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref 'ECSTG'
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref 'ALBListener2'
+      Priority: 1
+
+ 
   ServerService:
     Type: AWS::ECS::Service
     DependsOn: [ServerServiceDiscovery]
@@ -279,7 +416,7 @@ Resources:
   DNSNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Properties:
-      Name: local
+      Name: !Ref NamespaceName
       Vpc: !Ref VPCid
   
 
@@ -291,7 +428,7 @@ Resources:
         DnsRecords:
           - Type: A
             TTL: 60
-      Name: greeter_server
+      Name: !Ref ServerServiceEndpoint
       NamespaceId: !GetAtt DNSNamespace.Id
   
   ClientServiceDiscovery:
@@ -302,7 +439,7 @@ Resources:
         DnsRecords:
           - Type: A
             TTL: 60
-      Name: greeter_client
+      Name: !Ref ClientServiceEndpoint
       NamespaceId: !GetAtt DNSNamespace.Id 
 
 
